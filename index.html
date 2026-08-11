@@ -1,0 +1,1245 @@
+<!DOCTYPE html>
+<!--
+================================================================================
+  A LETTER — a scroll-driven, cinematic single-page narrative
+  Style reference: 2D ink-wash storybook flashback cutscenes.
+  Everything (layout, atmosphere, animation) lives in this one file so you can
+  drop it straight into a GitHub Pages repo as /index.html.
+
+  HOW THIS FILE IS ORGANISED
+  --------------------------
+  1. <head>   — fonts + the whole stylesheet, commented block by block.
+  2. <body>   — 8 <section class="scene"> blocks. Each scene is built from the
+                SAME four stacked layers (background / atmosphere / vignette /
+                text) so the visual language stays consistent.
+  3. <script> — IntersectionObserver logic + a plain-English guide at the end.
+
+  THE THREE THINGS YOU'LL WANT TO EDIT (all clearly marked further down):
+    A. Your story text  →  search for  "PLACE SECTION"
+    B. Your artwork     →  search for  "PASTE IMAGE URL"
+    C. Speeds/opacities →  search for  "CUSTOMISATION DIAL"
+================================================================================
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<!-- viewport-fit=cover lets the black bleed into the notch area on phones. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>A Letter</title>
+<meta name="description" content="A scroll-driven letter, told in eight movements." />
+<meta name="theme-color" content="#050608" />
+
+<!--
+  FONTS. Two serifs, each with a job:
+    Cinzel          — chiselled Roman caps. Used ONLY for the small numeral /
+                      chapter labels, so they read like carved stone.
+    Playfair Display — high-contrast literary serif. Used for the story itself;
+                      its thick/thin stroke contrast mirrors an ink brush.
+  preconnect warms up the TLS handshake before the CSS request goes out, which
+  shaves ~100-300ms off first paint on mobile networks.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500&family=Playfair+Display:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet" />
+
+<style>
+/* ============================================================================
+   0. CUSTOMISATION DIAL  ← START HERE
+   ----------------------------------------------------------------------------
+   Every number you are likely to want to tune is a CSS custom property here.
+   Change it once and it propagates everywhere, because every rule below reads
+   from these variables instead of hard-coding values.
+   ========================================================================== */
+:root{
+
+  /* --- PALETTE -------------------------------------------------------------
+     Monochrome + one cold blue + one warm amber. That's the whole world.
+     Keeping the palette this tight is what makes the amber in Section 4 feel
+     like actual warmth instead of just "another colour".                     */
+  --ink:        #050608;   /* deepest black — the page floor                  */
+  --ink-2:      #0a0d12;   /* charcoal, one step up from black                */
+  --blue-deep:  #101923;   /* dark watercolour blue, the "cold" of the story  */
+  --blue-wash:  #1b2836;   /* lighter wash blue for fog + split lighting      */
+  --ash:        #d9d6cf;   /* pale ash — the main text colour (never pure #fff
+                              on black: pure white vibrates and tires the eye)*/
+  --ash-dim:    #8a8880;   /* muted ash for chapter labels                    */
+  --warm:       #c8965a;   /* the single warm light. Used sparingly, on purpose*/
+
+  /* --- TEXT REVEAL ---------------------------------------------------------
+     CUSTOMISATION DIAL ①  "make the fade-ins faster / slower"
+     --reveal-dur  : how long a paragraph takes to rise and fade in.
+     --reveal-lift : how far below its final spot it starts (the "from the
+                     depths" feeling). Bigger = more dramatic rise.
+     --reveal-ease : the easing curve. This one starts fast then settles very
+                     slowly, which reads as "surfacing" rather than "sliding". */
+  --reveal-dur:   1.8s;
+  --reveal-lift:  40px;
+  --reveal-ease:  cubic-bezier(.16,.62,.23,1);
+  --reveal-stagger: .28s;  /* delay added per paragraph, so lines arrive in turn */
+
+  /* --- BACKGROUND "BREATH" -------------------------------------------------
+     CUSTOMISATION DIAL ②  the slow scale-up that makes static art feel alive.
+     A still image at 1.00 looks dead. Drifting it to 1.05 over 10s reads as a
+     held breath. Keep it under ~1.08 or it becomes a visible zoom.           */
+  --breathe-dur:   10s;
+  --breathe-scale: 1.05;
+
+  /* --- ATMOSPHERE ----------------------------------------------------------
+     CUSTOMISATION DIAL ③  fog / rain / ash intensity.
+     Each is an opacity multiplier on that whole effect layer. 0 turns it off. */
+  --fog-opacity:   .55;
+  --fog-speed:     70s;   /* one full horizontal pan. Slower = heavier air    */
+  --rain-opacity:  .38;
+  --rain-speed:    .9s;   /* time for one raindrop cycle. Lower = harder rain */
+  --ash-opacity:   .5;
+  --ash-speed:     26s;   /* time for a particle to cross the screen upward   */
+
+  /* --- VIGNETTE ------------------------------------------------------------
+     CUSTOMISATION DIAL ④  how hard the darkness closes in on the edges.
+     --vig-start : where the darkening begins (% of the radius). Lower = tighter.
+     --vig-power : the alpha of the outermost darkness. 1 = fully black edges. */
+  --vig-start: 38%;
+  --vig-power: .96;
+
+  /* --- TYPE SCALE ----------------------------------------------------------
+     CUSTOMISATION DIAL ⑤  mobile ↔ desktop text size, in ONE place.
+     clamp(MIN, PREFERRED, MAX):
+       MIN       = never smaller than this (phones)
+       PREFERRED = 1rem base + a slice of viewport width, so it grows fluidly
+       MAX       = never larger than this (big monitors)
+     Because the middle value scales with vw, you don't need size media queries. */
+  --fs-story: clamp(1.15rem, 0.95rem + 0.85vw, 1.7rem);
+  --fs-label: clamp(0.68rem, 0.62rem + 0.18vw, 0.82rem);
+  --lh-story: 1.95;        /* generous leading = slower, heavier reading pace */
+
+  /* --- MEASURE -------------------------------------------------------------
+     Max line length for the story column. ~34em ≈ 60-70 characters, the range
+     the eye tracks most comfortably.                                         */
+  --measure: 34em;
+}
+
+/* ============================================================================
+   1. RESET & PAGE SHELL
+   ========================================================================== */
+
+/* border-box means padding never inflates an element's declared width — the
+   single most useful line of CSS ever written. */
+*, *::before, *::after{ box-sizing: border-box; }
+
+html{
+  /* Native smooth scrolling for any anchor jumps. Cheap, no JS required. */
+  scroll-behavior: smooth;
+  /* Kills the elastic white flash past the top/bottom on iOS. */
+  background: var(--ink);
+}
+
+body{
+  margin: 0;
+  background: var(--ink);
+  color: var(--ash);
+  font-family: "Playfair Display", Georgia, "Times New Roman", serif;
+  /* Antialiasing: on dark backgrounds, default rendering makes light text look
+     fatter than it is. These two lines thin it back down. */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* Prevents a horizontal scrollbar caused by atmosphere layers that are
+     deliberately wider than the screen (fog/rain need overscan to pan). */
+  overflow-x: hidden;
+  /* iOS momentum scrolling — makes touch scrolling feel weighty and fluid. */
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Text selection styled to match the world instead of the OS default blue. */
+::selection{ background: var(--blue-wash); color: #fff; }
+
+/* Keyboard focus ring — accessibility isn't optional, but it can be tasteful. */
+:focus-visible{ outline: 1px solid var(--ash-dim); outline-offset: 4px; }
+
+/* --- Scroll progress hairline ---------------------------------------------
+   A 1px line across the very top that fills as you read. It is the only piece
+   of "UI" on the page; anything more would break the storybook illusion.     */
+#progress{
+  position: fixed; top: 0; left: 0; height: 1px; width: 100%;
+  transform: scaleX(0); transform-origin: 0 50%;   /* animate transform, not
+                                                      width — transforms are
+                                                      GPU-composited and never
+                                                      trigger layout reflow.  */
+  background: linear-gradient(90deg, transparent, var(--ash-dim));
+  z-index: 100; pointer-events: none;
+}
+
+/* --- Film grain ------------------------------------------------------------
+   A fixed, page-wide noise texture generated by an inline SVG turbulence
+   filter (no image file, no network request). Grain is what stops large flat
+   gradients from banding, and it's the single biggest contributor to the
+   "painted / printed" feel rather than "CSS gradient" feel.
+   mix-blend-mode: overlay lets it darken darks and lift lights subtly.       */
+#grain{
+  position: fixed; inset: -50%;      /* oversized so the drift never exposes an edge */
+  z-index: 90; pointer-events: none; opacity: .16;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/></filter><rect width='240' height='240' filter='url(%23n)' opacity='0.55'/></svg>");
+  animation: grainShift 1.1s steps(4) infinite;  /* steps() = jittery film grain,
+                                                    not a smooth slide.       */
+}
+@keyframes grainShift{
+  0%{   transform: translate(0,0); }
+  25%{  transform: translate(-2%, 1%); }
+  50%{  transform: translate(1%, -2%); }
+  75%{  transform: translate(-1%, -1%); }
+  100%{ transform: translate(0,0); }
+}
+
+/* ============================================================================
+   2. THE SCENE: FOUR STACKED LAYERS
+   ----------------------------------------------------------------------------
+   Every one of the 8 sections is the same machine:
+
+     .scene                      ← the 100vh stage, position:relative
+       └ .layer.layer-bg         ← LAYER 1  the artwork (filtered + breathing)
+       └ .layer.layer-atmos      ← LAYER 2  fog / rain / ash / light  (no pointer events)
+       └ .layer.layer-vignette   ← LAYER 3  the darkness closing in
+       └ .layer.layer-text       ← LAYER 4  the words
+
+   Because the structure never changes, swapping the artwork or the atmosphere
+   of any section never touches the layout.
+   ========================================================================== */
+
+.scene{
+  position: relative;
+  /* min-height, not height: if a text block is unusually long on a narrow
+     phone, the scene grows instead of clipping the words. */
+  min-height: 100vh;
+  /* svh = "small viewport height": on mobile browsers this is the height with
+     the address bar VISIBLE, so the scene never jumps when the bar hides.
+     Declared second so it simply overrides vh in browsers that support it. */
+  min-height: 100svh;
+  display: grid;              /* one-cell grid = perfect centring, no hacks   */
+  place-items: center;
+  overflow: hidden;           /* clips the oversized atmosphere layers        */
+  isolation: isolate;         /* new stacking context, so blend modes inside a
+                                 scene can't bleed into neighbouring scenes.  */
+  background: var(--ink);
+}
+
+/* All four layers share this: pinned to the scene, filling it completely. */
+.layer{
+  position: absolute;
+  inset: 0;                   /* shorthand for top/right/bottom/left: 0       */
+}
+
+/* --- LAYER 1 — BACKGROUND ARTWORK -----------------------------------------
+   The image is set per-section via the --img custom property (see the HTML).
+   The CSS filter chain is the important part: it forces ANY photo you paste in
+   — a sunny landscape, a stock photo, anything — into the grim ink aesthetic:
+
+     grayscale(1)    strip all colour → ink wash
+     contrast(1.25)  crush midtones apart → the "printed" high-contrast look
+     brightness(.55) drop it under the text so words stay legible
+     sepia(.22) + hue-rotate(185deg)
+                     a two-step trick: sepia tints everything warm-brown, then
+                     rotating the hue 185° swings that tint to cold blue. This
+                     gives a *toned* monochrome (like a cyanotype) rather than
+                     a flat, lifeless grey.                                    */
+.layer-bg{
+  background-image: var(--img, none);
+  background-size: cover;
+  background-position: center;
+  filter: grayscale(1) contrast(1.25) brightness(.55) sepia(.22) hue-rotate(185deg);
+  /* The breathing zoom starts at 1 and is driven by the .in-view class that
+     JavaScript adds. transform-origin varies per section (set inline) so the
+     drift feels composed rather than mechanical. */
+  transform: scale(1);
+  will-change: transform;     /* hints the GPU to promote this to its own layer */
+}
+
+/* Fallback pattern shown while --img is unset, so the page never looks broken.
+   Thin diagonal hatching = "artwork goes here", in the same ink palette. */
+.layer-bg::before{
+  content: "";
+  position: absolute; inset: 0;
+  background:
+    repeating-linear-gradient(115deg,
+      rgba(255,255,255,.035) 0 1px,
+      transparent 1px 9px),
+    linear-gradient(160deg, var(--blue-deep), var(--ink) 70%);
+}
+/* When you DO paste an image URL, hide the hatching by adding class="has-art"
+   to that section's .layer-bg. */
+.layer-bg.has-art::before{ display: none; }
+
+/* The little monospace note sitting in the placeholder art. Delete the <span>
+   in the HTML (or add .has-art) once real art is in. */
+.art-note{
+  /* Pinned to the bottom-left corner, NOT the centre — the centre belongs to
+     the story text, and a placeholder note sitting under the chapter rule
+     reads as a bug rather than a note. */
+  position: absolute; left: 1.5rem; bottom: 1.5rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: .62rem; letter-spacing: .22em; text-transform: uppercase;
+  color: rgba(217,214,207,.22);
+  white-space: nowrap;
+}
+
+/* The breathing animation. Applied only once the section is on screen, so all
+   eight aren't animating simultaneously in the background (battery + jank). */
+.scene.in-view .layer-bg{
+  animation: breathe var(--breathe-dur) ease-out forwards;
+}
+@keyframes breathe{
+  from{ transform: scale(1); }
+  to  { transform: scale(var(--breathe-scale)); }
+}
+
+/* --- LAYER 2 — ATMOSPHERE --------------------------------------------------
+   pointer-events:none is MANDATORY here: this layer covers the whole screen,
+   and without it, it would swallow every click, text selection and scroll
+   gesture aimed at the words underneath.                                     */
+.layer-atmos{
+  pointer-events: none;
+  overflow: hidden;
+}
+
+/* --- LAYER 3 — VIGNETTE ----------------------------------------------------
+   A radial gradient from transparent centre to near-black edges. Two jobs:
+     1. Optically it "suffocates" the frame and drags the eye to the middle.
+     2. Practically it guarantees text/background contrast no matter what
+        image you paste in later.
+   The extra linear-gradient darkens top and bottom so consecutive scenes melt
+   into each other instead of showing a visible seam as you scroll.           */
+.layer-vignette{
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 78% 68% at 50% 50%,
+      transparent var(--vig-start),
+      rgba(5,6,8,.72) 78%,
+      rgba(5,6,8,var(--vig-power)) 100%),
+    linear-gradient(to bottom,
+      var(--ink) 0%, transparent 16%, transparent 84%, var(--ink) 100%);
+}
+
+/* --- LAYER 4 — TEXT --------------------------------------------------------
+   Sits above everything. It is NOT position:absolute-centred; it uses the
+   scene's grid centring, so a long paragraph can push the scene taller.      */
+.layer-text{
+  position: relative;         /* relative, so it participates in the grid     */
+  z-index: 4;
+  width: min(88vw, var(--measure));  /* 88% of the screen on phones, capped at
+                                        the comfortable reading measure on
+                                        desktop. One line replaces a media
+                                        query.                                */
+  padding: 12vh 0;
+  text-align: center;
+  text-wrap: pretty;          /* modern browsers balance ragged edges + kill
+                                 orphans automatically                        */
+}
+
+/* The chapter label: small carved caps, wide tracking, dimmed. */
+.label{
+  font-family: "Cinzel", Georgia, serif;
+  font-size: var(--fs-label);
+  letter-spacing: .42em;      /* huge tracking reads as "engraved"            */
+  text-transform: uppercase;
+  color: var(--ash-dim);
+  margin: 0 0 2.6rem;
+  /* Negative right margin compensates for the trailing letter-space, so the
+     label stays optically centred. A tiny detail; it matters. */
+  margin-right: -.42em;
+}
+
+/* A hairline rule under the label — a breath between chapter and story. */
+.label::after{
+  content: "";
+  display: block;
+  width: 44px; height: 1px;
+  margin: 1.4rem auto 0;
+  background: linear-gradient(90deg, transparent, var(--ash-dim), transparent);
+  opacity: .6;
+}
+
+/* The story paragraphs themselves. */
+.layer-text p{
+  font-size: var(--fs-story);
+  line-height: var(--lh-story);
+  font-weight: 400;
+  color: var(--ash);
+  margin: 0 0 1.6em;
+  /* A soft dark halo behind the glyphs. Not a "drop shadow" look — it's a
+     legibility guarantee against whatever image ends up behind the text. */
+  text-shadow: 0 2px 22px rgba(0,0,0,.9), 0 0 60px rgba(0,0,0,.7);
+}
+.layer-text p:last-child{ margin-bottom: 0; }
+
+/* ============================================================================
+   3. THE SCROLL REVEAL
+   ----------------------------------------------------------------------------
+   The whole mechanic in three rules:
+     .reveal            → the resting (hidden) state: invisible, pushed down.
+     .reveal.is-visible → the arrived state: opaque, in place.
+     transition         → the 1.8s journey between the two.
+   JavaScript's ONLY job is to add the .is-visible class at the right moment.
+   All the beauty is CSS. This is deliberate: it means the page degrades to a
+   plain readable letter if JS ever fails (see the <noscript> rule below).
+   ========================================================================== */
+.reveal{
+  opacity: 0;
+  transform: translateY(var(--reveal-lift));
+  /* Only opacity and transform are animated. These are the two properties a
+     browser can animate on the GPU without recalculating layout — which is
+     why this stays at 60fps on a mid-range phone. */
+  transition:
+    opacity   var(--reveal-dur) var(--reveal-ease),
+    transform var(--reveal-dur) var(--reveal-ease);
+}
+.reveal.is-visible{
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Stagger: each successive revealing child waits a little longer, so a scene's
+   label, then first line, then second line arrive in sequence. Change
+   --reveal-stagger at the top to tighten or loosen the rhythm. */
+.reveal:nth-child(1){ transition-delay: calc(var(--reveal-stagger) * 0); }
+.reveal:nth-child(2){ transition-delay: calc(var(--reveal-stagger) * 1); }
+.reveal:nth-child(3){ transition-delay: calc(var(--reveal-stagger) * 2); }
+.reveal:nth-child(4){ transition-delay: calc(var(--reveal-stagger) * 3); }
+.reveal:nth-child(5){ transition-delay: calc(var(--reveal-stagger) * 4); }
+.reveal:nth-child(6){ transition-delay: calc(var(--reveal-stagger) * 5); }
+
+/* No JavaScript? Show everything immediately. The letter still reads. */
+.no-js .reveal{ opacity: 1; transform: none; }
+
+/* ============================================================================
+   4. ATMOSPHERE RECIPES
+   ----------------------------------------------------------------------------
+   Each is a class you drop on a .layer-atmos. They're intentionally
+   interchangeable: put .atmos-rain on Section 6 instead of .atmos-fog and it
+   just works.
+
+   PERFORMANCE NOTE: every effect below animates ONLY transform, opacity, or
+   background-position. None of them animate width/height/top/left, which would
+   force the browser to re-layout the page 60 times a second.
+   ========================================================================== */
+
+/* --- FOG -------------------------------------------------------------------
+   Three oversized, very soft radial "clouds" drifting sideways at different
+   speeds. Different speeds is the trick — matched speeds read as one flat
+   sheet moving; mismatched speeds read as depth and volume.
+   The layer is 200% wide so a cloud can slide fully off one side while another
+   slides in, with no visible gap or pop.                                     */
+.atmos-fog .fog{
+  position: absolute;
+  top: -20%; height: 140%;
+  width: 200%;
+  opacity: var(--fog-opacity);
+  will-change: transform;
+}
+.atmos-fog .fog-1{
+  background:
+    radial-gradient(ellipse 46% 40% at 22% 55%, rgba(27,40,54,.85), transparent 65%),
+    radial-gradient(ellipse 38% 30% at 62% 40%, rgba(16,25,35,.9),  transparent 62%);
+  animation: fogDrift var(--fog-speed) linear infinite;
+}
+.atmos-fog .fog-2{
+  background:
+    radial-gradient(ellipse 52% 34% at 40% 70%, rgba(10,13,18,.95), transparent 68%),
+    radial-gradient(ellipse 30% 26% at 80% 62%, rgba(27,40,54,.7),  transparent 60%);
+  /* calc() derives the second speed from the first, so tuning --fog-speed
+     keeps the two layers proportionally related instead of drifting apart. */
+  animation: fogDrift calc(var(--fog-speed) * 1.7) linear infinite reverse;
+  opacity: calc(var(--fog-opacity) * .8);
+}
+.atmos-fog .fog-3{
+  background: radial-gradient(ellipse 60% 44% at 50% 84%, rgba(5,6,8,.98), transparent 70%);
+  animation: fogDrift calc(var(--fog-speed) * 2.4) linear infinite;
+  opacity: calc(var(--fog-opacity) * .9);
+}
+@keyframes fogDrift{
+  from{ transform: translate3d(-25%, 0, 0); }
+  to  { transform: translate3d(  0%, 0, 0); }
+}
+
+/* --- RAIN ------------------------------------------------------------------
+   A repeating-linear-gradient at 105° produces infinite parallel angled lines
+   for free — no DOM elements, no JS. Animating background-position slides the
+   whole sheet diagonally, which reads as falling rain.
+   Two sheets at different sizes/speeds give the shower depth.                */
+.atmos-rain .rain{
+  position: absolute; inset: -30%;   /* overscan so the angled edges never show */
+  opacity: var(--rain-opacity);
+  will-change: background-position;
+}
+.atmos-rain .rain-near{
+  background-image: repeating-linear-gradient(105deg,
+    transparent 0 7px,
+    rgba(217,214,207,.30) 7px 8px,
+    transparent 8px 15px);
+  background-size: 100px 140px;
+  animation: rainFall var(--rain-speed) linear infinite;
+}
+.atmos-rain .rain-far{
+  background-image: repeating-linear-gradient(101deg,
+    transparent 0 12px,
+    rgba(217,214,207,.16) 12px 13px,
+    transparent 13px 26px);
+  background-size: 160px 200px;
+  animation: rainFall calc(var(--rain-speed) * 2.1) linear infinite;
+  opacity: calc(var(--rain-opacity) * .6);
+}
+@keyframes rainFall{
+  from{ background-position: 0 0; }
+  to  { background-position: 200px 620px; }  /* x:y ratio must match the gradient
+                                                angle, or the drops appear to
+                                                slide sideways as they fall.  */
+}
+
+/* --- ASH / EMBERS ----------------------------------------------------------
+   Same trick as rain, but with DOTS instead of lines, moving UP.
+   radial-gradient(circle, colour Npx, transparent Npx) + background-size gives
+   you a tiling field of specks. Three fields at three scales and speeds = a
+   convincing parallax particle system in ~15 lines, with zero DOM nodes.     */
+.atmos-ash .ash{
+  position: absolute; inset: -20%;
+  opacity: var(--ash-opacity);
+  will-change: background-position;
+}
+.atmos-ash .ash-1{
+  background-image:
+    radial-gradient(circle, rgba(217,214,207,.55) 1px, transparent 1.4px),
+    radial-gradient(circle, rgba(217,214,207,.35) 1px, transparent 1.4px);
+  background-size: 140px 140px, 90px 90px;
+  background-position: 0 0, 40px 60px;
+  animation: ashRise var(--ash-speed) linear infinite;
+}
+.atmos-ash .ash-2{
+  background-image: radial-gradient(circle, rgba(217,214,207,.28) 1.6px, transparent 2px);
+  background-size: 220px 220px;
+  animation: ashRise calc(var(--ash-speed) * 1.9) linear infinite;
+  opacity: calc(var(--ash-opacity) * .7);
+}
+.atmos-ash .ash-3{
+  background-image: radial-gradient(circle, rgba(200,150,90,.30) 1px, transparent 1.5px);
+  background-size: 300px 300px;
+  animation: ashRise calc(var(--ash-speed) * 2.8) linear infinite;
+  opacity: calc(var(--ash-opacity) * .55);
+}
+@keyframes ashRise{
+  from{ background-position-y: 0; }
+  to  { background-position-y: -900px; }   /* negative = upward drift          */
+}
+/* Section 3 reuses .atmos-ash but denser and faster — see .crisis below. */
+
+/* --- LOOMING TREES (Section 1) --------------------------------------------
+   Irregular vertical bars from a repeating-linear-gradient, then masked so
+   they dissolve into blackness at the top and bottom. The irregular stop
+   widths (18px / 9px / 4px) are what stop it reading as a barcode.           */
+.atmos-trees::before{
+  content: "";
+  position: absolute; inset: 0;
+  background: repeating-linear-gradient(90deg,
+    rgba(5,6,8,.92) 0 18px,
+    transparent 18px 46px,
+    rgba(5,6,8,.75) 46px 55px,
+    transparent 55px 96px,
+    rgba(5,6,8,.88) 96px 104px,
+    transparent 104px 168px);
+  /* The mask fades the trunks out top and bottom so they feel like they extend
+     beyond the frame rather than being cropped rectangles. */
+  -webkit-mask-image: linear-gradient(to bottom, #000 0 55%, transparent 92%);
+          mask-image: linear-gradient(to bottom, #000 0 55%, transparent 92%);
+}
+/* The faint point of warm light at the bottom centre — the whole reason the
+   forest reads as oppressive is that there is exactly ONE of these. */
+.atmos-trees::after{
+  content: "";
+  position: absolute; left: 50%; bottom: 9%;
+  width: 260px; height: 260px;
+  transform: translateX(-50%);
+  background: radial-gradient(circle, rgba(200,150,90,.42) 0%, rgba(200,150,90,.10) 32%, transparent 62%);
+  animation: emberFlicker 6.5s ease-in-out infinite;
+}
+@keyframes emberFlicker{
+  0%,100%{ opacity: .75; transform: translateX(-50%) scale(1); }
+  50%    { opacity: 1;   transform: translateX(-50%) scale(1.08); }
+}
+
+/* --- SPLIT LIGHTING (Section 2) -------------------------------------------
+   One cold-blue wash on the left half, pure void on the right. A single
+   linear-gradient at 90° does it; the hard-ish stop at 52% is the "edge" of
+   the light falling across a face.                                           */
+.atmos-split::before{
+  content: "";
+  position: absolute; inset: 0;
+  background: linear-gradient(90deg,
+    rgba(27,40,54,.55) 0%,
+    rgba(16,25,35,.30) 34%,
+    rgba(5,6,8,.85) 52%,
+    rgba(5,6,8,1) 100%);
+}
+
+/* --- HEARTBEAT PULSE (Sections 3 & 7) -------------------------------------
+   A radial gradient that swells and fades on an irregular rhythm. The keyframe
+   percentages are deliberately uneven (8%, 18%) so it reads as a lub-DUB
+   cardiac rhythm rather than a metronome.                                    */
+.atmos-pulse::before{
+  content: "";
+  position: absolute; inset: 0;
+  background: radial-gradient(ellipse 60% 50% at 50% 50%,
+    rgba(40,20,24,.55) 0%, transparent 62%);
+  animation: heartbeat 3.4s ease-in-out infinite;
+}
+@keyframes heartbeat{
+  0%   { transform: scale(.94); opacity: .35; }
+  8%   { transform: scale(1.04); opacity: .8;  }   /* lub */
+  16%  { transform: scale(.97); opacity: .45; }
+  24%  { transform: scale(1.02); opacity: .65; }   /* dub */
+  40%  { transform: scale(.94); opacity: .3;  }
+  100% { transform: scale(.94); opacity: .35; }
+}
+
+/* --- HAVEN GLOW (Section 4) ------------------------------------------------
+   The one warm moment in the whole page. A soft amber radial sitting BEHIND
+   the text, with the storm layers still raging at the edges. The contrast
+   between the two is the entire emotional point of the section.              */
+.atmos-haven .glow{
+  position: absolute; left: 50%; top: 50%;
+  width: min(120vw, 900px); aspect-ratio: 1;
+  transform: translate(-50%,-50%);
+  background: radial-gradient(circle,
+    rgba(200,150,90,.30) 0%,
+    rgba(200,150,90,.13) 26%,
+    rgba(160,110,60,.05) 46%,
+    transparent 66%);
+  animation: lanternBreath 8s ease-in-out infinite;
+}
+@keyframes lanternBreath{
+  0%,100%{ opacity: .85; transform: translate(-50%,-50%) scale(1); }
+  50%    { opacity: 1;   transform: translate(-50%,-50%) scale(1.06); }
+}
+/* Inside the haven, the story text picks up a faint warm cast — the light is
+   actually falling on the words. */
+.haven .layer-text p{ color: #e6dccb; }
+
+/* --- DRIFTING APART (Section 5) -------------------------------------------
+   Two silhouette-ish dark masses pushed to the far edges, with a wide empty
+   black gulf between them. The composition IS the meaning here.              */
+.atmos-apart::before,
+.atmos-apart::after{
+  content: "";
+  position: absolute; bottom: 0;
+  width: 34%; height: 82%;
+  background: radial-gradient(ellipse 60% 70% at 50% 100%, rgba(5,6,8,1) 0%, rgba(5,6,8,.55) 55%, transparent 78%);
+}
+.atmos-apart::before{ left: -4%;  }
+.atmos-apart::after { right: -4%; }
+/* Letter-spacing that expands as the section arrives = the words themselves
+   drifting apart. Transitioning letter-spacing does cause reflow, but on a
+   handful of centred lines the cost is negligible and the effect is worth it. */
+.apart .layer-text p{
+  letter-spacing: .01em;
+  transition: letter-spacing 2.6s var(--reveal-ease);
+}
+.apart.in-view .layer-text p{ letter-spacing: .1em; }
+
+/* --- STILLNESS (Section 8) -------------------------------------------------
+   No particles, no drift. Just an enormous, very slow dimming light. Silence
+   after seven sections of weather is its own effect.                         */
+.atmos-still::before{
+  content: "";
+  position: absolute; inset: 0;
+  background: radial-gradient(ellipse 70% 55% at 50% 42%,
+    rgba(27,40,54,.42) 0%, transparent 68%);
+  animation: lastLight 14s ease-in-out infinite;
+}
+@keyframes lastLight{
+  0%,100%{ opacity: .55; }
+  50%    { opacity: .95; }
+}
+
+/* The single white full stop that closes the letter. */
+.final-dot{
+  width: 6px; height: 6px;
+  margin: 5rem auto 0;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 26px 6px rgba(255,255,255,.22);
+}
+
+/* ============================================================================
+   5. RESPONSIVE
+   ----------------------------------------------------------------------------
+   There is very little here, and that's the point: clamp() and min() already
+   handled the type and the measure. These queries only fix the things fluid
+   units can't — effect density and mobile GPU cost.
+   ========================================================================== */
+@media (max-width: 700px){
+  :root{
+    /* Phones: lighter atmosphere. Full-strength fog over a small screen just
+       looks like a grey wash, and costs battery for nothing. */
+    --fog-opacity: .42;
+    --ash-opacity: .38;
+    --rain-opacity: .3;
+    --vig-start: 30%;      /* tighter vignette suits the narrower frame        */
+    --lh-story: 1.85;      /* slightly tighter leading so fewer lines wrap off */
+    --breathe-scale: 1.035;/* less zoom — big scale on a small screen jitters  */
+  }
+  .layer-text{
+    width: 88vw;           /* 88% of screen width, per the brief               */
+    padding: 14vh 0;
+  }
+  .label{ letter-spacing: .3em; margin-bottom: 2rem; }
+  .label::after{ margin-top: 1.1rem; }
+
+  /* IMPORTANT: background-attachment: fixed is notoriously janky on iOS and
+     Android — the browser repaints the whole image every scroll frame. We use
+     transform-based motion instead everywhere, but this rule is here as an
+     explicit guard in case you add a fixed background later. */
+  .layer-bg{ background-attachment: scroll !important; }
+}
+
+/* Very short landscape phones: reclaim vertical space. */
+@media (max-height: 520px){
+  .layer-text{ padding: 8vh 0; }
+  :root{ --lh-story: 1.6; }
+}
+
+/* --- ACCESSIBILITY: reduced motion ----------------------------------------
+   If the visitor has asked their OS to reduce motion (a real need for people
+   with vestibular disorders), we keep the mood and kill the movement: no
+   drifting fog, no rain, no zoom, no grain jitter — just a gentle fade.      */
+@media (prefers-reduced-motion: reduce){
+  *, *::before, *::after{
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .4s !important;
+  }
+  .reveal{ transform: none; }
+  #grain{ animation: none; }
+}
+</style>
+</head>
+
+<body class="no-js">
+<!-- .no-js is removed by JavaScript on line 1 of the script. If JS never runs,
+     the class stays and the CSS above shows all text immediately. -->
+
+<div id="progress" aria-hidden="true"></div>
+<div id="grain"   aria-hidden="true"></div>
+
+<main>
+
+<!-- ==========================================================================
+     SECTION 1 — THE WARNING
+     --------------------------------------------------------------------------
+     ART DIRECTION for the image you'll paste in:
+       A dark, oppressive forest path receding into blackness. Shot low, looking
+       down the path. Almost no sky. The only light source should be a tiny,
+       distant point at the far end of the path, roughly bottom-centre of frame
+       so it lines up with the CSS ember glow already coded here.
+       Ink-wash, brush-textured, no fine detail — detail dies under the filters.
+     CODED ATMOSPHERE: .atmos-trees → looming vertical trunks + flickering ember.
+     ======================================================================== -->
+<section class="scene warning" id="scene-1">
+
+  <!-- LAYER 1 — artwork.
+       PASTE IMAGE URL ► replace none below:  --img: url('images/01-forest.jpg')
+       Then add class="layer-bg has-art" to hide the placeholder hatching,
+       and delete the <span class="art-note"> line. -->
+  <div class="layer layer-bg" style="--img: none; transform-origin: 50% 70%;">
+    <span class="art-note">section 01 — forest path, distant light</span>
+  </div>
+
+  <!-- LAYER 2 — atmosphere -->
+  <div class="layer layer-atmos atmos-trees" aria-hidden="true"></div>
+
+  <!-- LAYER 3 — vignette -->
+  <div class="layer layer-vignette" aria-hidden="true"></div>
+
+  <!-- LAYER 4 — text -->
+  <div class="layer-text">
+    <p class="label reveal">I &nbsp;·&nbsp; The Warning</p>
+    <!-- PLACE SECTION 1 TEXT HERE -->
+    <p class="reveal">[Section 1 Content Placeholder]</p>
+  </div>
+</section>
+
+
+<!-- ==========================================================================
+     SECTION 2 — THE MASK
+     --------------------------------------------------------------------------
+     ART DIRECTION:
+       A crowd rendered entirely in shadow — shapes, not faces. One figure
+       nearer the camera, isolated and faceless, lit from the LEFT so it sits
+       inside the coded split-light. Its cast shadow should be distorted and
+       weeping — longer and more human than the figure itself.
+     CODED ATMOSPHERE: .atmos-split → cold blue on the left, void on the right.
+     ======================================================================== -->
+<section class="scene mask" id="scene-2">
+
+  <!-- PASTE IMAGE URL ► --img: url('images/02-crowd.jpg') -->
+  <div class="layer layer-bg" style="--img: none; transform-origin: 30% 50%;">
+    <span class="art-note">section 02 — shadowed crowd, one faceless figure</span>
+  </div>
+
+  <div class="layer layer-atmos atmos-split" aria-hidden="true"></div>
+  <div class="layer layer-vignette" aria-hidden="true"></div>
+
+  <div class="layer-text">
+    <p class="label reveal">II &nbsp;·&nbsp; The Mask</p>
+    <!-- PLACE SECTION 2 TEXT HERE -->
+    <p class="reveal">[Section 2 Content Placeholder]</p>
+  </div>
+</section>
+
+
+<!-- ==========================================================================
+     SECTION 3 — THE CRISIS
+     --------------------------------------------------------------------------
+     ART DIRECTION:
+       The darkest frame on the site. Almost nothing legible — a suggestion of a
+       shape dissolving into black. If in doubt, use NO image here at all; the
+       coded blackness is stronger than any picture.
+     CODED ATMOSPHERE: .atmos-pulse (heartbeat) + .atmos-ash at crisis density.
+       The .crisis class below overrides the dials locally — see the inline
+       style attribute on the <section>. This is the pattern for tuning a
+       single section without touching the global :root values.
+     ======================================================================== -->
+<section class="scene crisis" id="scene-3"
+         style="--ash-speed: 9s; --ash-opacity: .75; --vig-start: 16%; --vig-power: 1;">
+
+  <!-- PASTE IMAGE URL ► --img: url('images/03-abyss.jpg')  (or leave as none) -->
+  <div class="layer layer-bg" style="--img: none; filter: grayscale(1) contrast(1.4) brightness(.25);">
+    <span class="art-note">section 03 — near-total darkness</span>
+  </div>
+
+  <!-- Two atmosphere layers stacked. They're both pointer-events:none, so
+       layering them costs nothing in interaction terms. -->
+  <div class="layer layer-atmos atmos-pulse" aria-hidden="true"></div>
+  <div class="layer layer-atmos atmos-ash" aria-hidden="true">
+    <div class="ash ash-1"></div>
+    <div class="ash ash-2"></div>
+  </div>
+
+  <div class="layer layer-vignette" aria-hidden="true"></div>
+
+  <div class="layer-text">
+    <p class="label reveal">III &nbsp;·&nbsp; The Crisis</p>
+    <!-- PLACE SECTION 3 TEXT HERE -->
+    <p class="reveal">[Section 3 Content Placeholder]</p>
+  </div>
+</section>
+
+
+<!-- ==========================================================================
+     SECTION 4 — THE HAVEN
+     --------------------------------------------------------------------------
+     ART DIRECTION:
+       A storm-lashed exterior, with ONE doorway in the centre of frame spilling
+       warm light. Everything outside that rectangle of light should be near
+       black. Compose so the doorway sits dead centre — the coded amber glow is
+       centred and will halo it.
+     CODED ATMOSPHERE: .atmos-rain (edges) + .atmos-haven (warm centre glow).
+     ======================================================================== -->
+<section class="scene haven" id="scene-4" style="--rain-opacity: .5; --rain-speed: .7s;">
+
+  <!-- PASTE IMAGE URL ► --img: url('images/04-doorway.jpg') -->
+  <div class="layer layer-bg" style="--img: none; transform-origin: 50% 50%;">
+    <span class="art-note">section 04 — lit doorway in a storm</span>
+  </div>
+
+  <div class="layer layer-atmos atmos-rain" aria-hidden="true">
+    <div class="rain rain-far"></div>
+    <div class="rain rain-near"></div>
+  </div>
+
+  <div class="layer layer-atmos atmos-haven" aria-hidden="true">
+    <div class="glow"></div>
+  </div>
+
+  <div class="layer layer-vignette" aria-hidden="true"></div>
+
+  <div class="layer-text">
+    <p class="label reveal">IV &nbsp;·&nbsp; The Haven</p>
+    <!-- PLACE SECTION 4 TEXT HERE -->
+    <p class="reveal">[Section 4 Content Placeholder]</p>
+  </div>
+</section>
+
+
+<!-- ==========================================================================
+     SECTION 5 — THE FEAR
+     --------------------------------------------------------------------------
+     ART DIRECTION:
+       Two dark silhouettes, one near each edge of frame, both facing slightly
+       away. The centre of the image must be EMPTY — that dead space is the
+       subject. Resist the urge to fill it.
+     CODED ATMOSPHERE: .atmos-apart → dark masses at both edges; the text's
+       letter-spacing expands as the section enters view.
+     ======================================================================== -->
+<section class="scene apart" id="scene-5">
+
+  <!-- PASTE IMAGE URL ► --img: url('images/05-distance.jpg') -->
+  <div class="layer layer-bg" style="--img: none; transform-origin: 50% 40%;">
+    <span class="art-note">section 05 — two figures, empty space between</span>
+  </div>
+
+  <div class="layer layer-atmos atmos-apart" aria-hidden="true"></div>
+  <div class="layer layer-vignette" aria-hidden="true"></div>
+
+  <div class="layer-text">
+    <p class="label reveal">V &nbsp;·&nbsp; The Fear</p>
+    <!-- PLACE SECTION 5 TEXT HERE -->
+    <p class="reveal">[Section 5 Content Placeholder]</p>
+  </div>
+</section>
+
+
+<!-- ==========================================================================
+     SECTION 6 — SCANNING THE HORIZON
+     --------------------------------------------------------------------------
+     ART DIRECTION:
+       A horizon you can barely find. A wide, flat, featureless expanse — moor,
+       water, or road — with the far edge already lost. The image should feel
+       like it has been half-erased.
+     CODED ATMOSPHERE: .atmos-fog at maximum density — three drifting sheets.
+     ======================================================================== -->
+<section class="scene horizon" id="scene-6" style="--fog-opacity: .8; --fog-speed: 55s;">
+
+  <!-- PASTE IMAGE URL ► --img: url('images/06-horizon.jpg') -->
+  <div class="layer layer-bg" style="--img: none; transform-origin: 50% 60%;">
+    <span class="art-note">section 06 — lost horizon</span>
+  </div>
+
+  <div class="layer layer-atmos atmos-fog" aria-hidden="true">
+    <div class="fog fog-1"></div>
+    <div class="fog fog-2"></div>
+    <div class="fog fog-3"></div>
+  </div>
+
+  <div class="layer layer-vignette" aria-hidden="true"></div>
+
+  <div class="layer-text">
+    <p class="label reveal">VI &nbsp;·&nbsp; Scanning the Horizon</p>
+    <!-- PLACE SECTION 6 TEXT HERE -->
+    <p class="reveal">[Section 6 Content Placeholder]</p>
+  </div>
+</section>
+
+
+<!-- ==========================================================================
+     SECTION 7 — THE AFTERMATH
+     --------------------------------------------------------------------------
+     ART DIRECTION:
+       Stillness after damage. An empty room, a cold bed, a chair. Ash in the
+       air. Nobody in frame — the absence is the point. Slightly softer contrast
+       than the sections before it: the violence is over.
+     CODED ATMOSPHERE: .atmos-ash (drifting upward) + a faint .atmos-pulse for
+       the fragile heartbeat underneath.
+     ======================================================================== -->
+<section class="scene aftermath" id="scene-7" style="--ash-speed: 34s;">
+
+  <!-- PASTE IMAGE URL ► --img: url('images/07-aftermath.jpg') -->
+  <div class="layer layer-bg" style="--img: none; transform-origin: 50% 50%;">
+    <span class="art-note">section 07 — empty room, drifting ash</span>
+  </div>
+
+  <div class="layer layer-atmos atmos-pulse" aria-hidden="true" style="opacity: .5;"></div>
+
+  <div class="layer layer-atmos atmos-ash" aria-hidden="true">
+    <div class="ash ash-1"></div>
+    <div class="ash ash-2"></div>
+    <div class="ash ash-3"></div>
+  </div>
+
+  <div class="layer layer-vignette" aria-hidden="true"></div>
+
+  <div class="layer-text">
+    <p class="label reveal">VII &nbsp;·&nbsp; The Aftermath</p>
+    <!-- PLACE SECTION 7 TEXT HERE -->
+    <p class="reveal">[Section 7 Content Placeholder]</p>
+  </div>
+</section>
+
+
+<!-- ==========================================================================
+     SECTION 8 — FAREWELL
+     --------------------------------------------------------------------------
+     ART DIRECTION:
+       The darkest blacks on the site, but calm rather than frightening. A
+       single soft light source far away, already fading. No figures, no
+       weather. If you use an image at all, make it almost entirely black with
+       one faint gradient of light.
+     CODED ATMOSPHERE: .atmos-still → one enormous, very slow breathing light.
+       Ends with a single white full stop.
+     ======================================================================== -->
+<section class="scene farewell" id="scene-8"
+         style="--vig-start: 26%; --breathe-dur: 18s; --breathe-scale: 1.03;">
+
+  <!-- PASTE IMAGE URL ► --img: url('images/08-farewell.jpg') -->
+  <div class="layer layer-bg" style="--img: none; filter: grayscale(1) contrast(1.15) brightness(.38) sepia(.2) hue-rotate(190deg);">
+    <span class="art-note">section 08 — a fading light</span>
+  </div>
+
+  <div class="layer layer-atmos atmos-still" aria-hidden="true"></div>
+  <div class="layer layer-vignette" aria-hidden="true"></div>
+
+  <div class="layer-text">
+    <p class="label reveal">VIII &nbsp;·&nbsp; Farewell</p>
+    <!-- PLACE SECTION 8 TEXT HERE -->
+    <p class="reveal">[Section 8 Content Placeholder]</p>
+    <!-- The final period. It reveals last, several seconds after the text. -->
+    <div class="final-dot reveal" style="transition-delay: 1.8s;" aria-hidden="true"></div>
+  </div>
+</section>
+
+</main>
+
+<script>
+/* ============================================================================
+   THE MECHANICS
+   ----------------------------------------------------------------------------
+   This script is deliberately small. It does exactly three things:
+     1. Tells the CSS that JavaScript is alive.
+     2. Adds .is-visible to text blocks when they scroll into view.
+     3. Adds .in-view to a whole scene when it scrolls into view (which starts
+        that scene's "breathing" background zoom).
+   Plus a tiny scroll-progress hairline.
+   ========================================================================== */
+
+/* --- 1. Signal that JS is running -----------------------------------------
+   We remove .no-js immediately, BEFORE the observers run. If the browser
+   blocked scripts, .no-js stays and every .reveal is visible by default, so
+   the letter is still fully readable. Progressive enhancement, not reliance. */
+document.body.classList.remove('no-js');
+
+/* Does this visitor prefer reduced motion? If so we skip the observers
+   entirely and just show everything — matching the CSS media query above. */
+const prefersReducedMotion =
+  window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+
+/* --- 2. The text reveal observer ------------------------------------------
+   Watches every .reveal element. When one crosses the trigger line, we add
+   .is-visible and the CSS transition (1.8s fade + rise) does the rest.
+
+   OPTIONS EXPLAINED
+   -----------------
+   root:       null = measure against the browser viewport itself.
+   threshold:  0.15 = fire when 15% of the element is showing. A small number
+               feels responsive; a large one (0.8) makes text arrive late and
+               feel sluggish.
+   rootMargin: '0px 0px -12% 0px' shrinks the bottom of the detection box by
+               12% of the viewport height. Practical effect: text waits until
+               it is properly ON screen rather than triggering the instant it
+               peeks over the bottom edge. Negative bottom margin = later
+               trigger; positive = earlier.
+
+   CUSTOMISATION DIAL ⑥ — reveal timing lives in CSS (--reveal-dur), NOT here.
+   Change WHEN it fires with threshold/rootMargin below; change HOW LONG it
+   takes with --reveal-dur at the top of the stylesheet.                      */
+const textObserver = new IntersectionObserver((entries, observer) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      entry.target.classList.add('is-visible');
+      /* unobserve = stop watching this element forever. The text has arrived;
+         we don't want it fading back out when scrolled past, and we don't want
+         to keep paying to observe it. Delete this line if you'd prefer the
+         text to fade out again on the way back up. */
+      observer.unobserve(entry.target);
+    }
+  });
+}, {
+  root: null,
+  threshold: 0.15,
+  rootMargin: '0px 0px -12% 0px'
+});
+
+/* --- 3. The scene observer -------------------------------------------------
+   Separate observer, different sensitivity. A scene is "in view" as soon as a
+   quarter of it is showing — we want the background to START breathing before
+   the reader has fully arrived, so the motion is already underway when they
+   settle. Unlike the text, we do NOT unobserve: we toggle the class both ways,
+   which pauses off-screen animations and keeps the page cheap to run.        */
+const sceneObserver = new IntersectionObserver(entries => {
+  entries.forEach(entry => {
+    entry.target.classList.toggle('in-view', entry.isIntersecting);
+  });
+}, {
+  root: null,
+  threshold: 0.25
+});
+
+/* Wire the observers up to the DOM. */
+if (prefersReducedMotion) {
+  /* Reduced motion: no scroll choreography at all. Everything simply is. */
+  document.querySelectorAll('.reveal').forEach(el => el.classList.add('is-visible'));
+} else {
+  document.querySelectorAll('.reveal').forEach(el => textObserver.observe(el));
+  document.querySelectorAll('.scene').forEach(el => sceneObserver.observe(el));
+
+  /* Edge case: if the page is reloaded halfway down (browsers restore scroll
+     position), elements already on screen fire immediately — IntersectionObserver
+     always reports initial state on its first tick, so this is handled for free.
+     Nothing to do here; the comment exists so you don't go looking for a bug. */
+}
+
+
+/* --- 4. Scroll progress hairline ------------------------------------------
+   Reads how far down the document we are and scales the top line accordingly.
+
+   WHY requestAnimationFrame + a "ticking" flag?
+   A scroll event can fire 100+ times a second. Doing layout maths on every one
+   of them is how pages start to stutter. Instead we set a flag, and let the
+   browser call us back exactly once per painted frame — so we do the work at
+   most 60 times a second, always in sync with the screen refresh.
+   { passive: true } promises the browser we will never call preventDefault(),
+   which lets it start scrolling without waiting for our code. Essential for
+   smooth touch scrolling on mobile.                                          */
+const progressBar = document.getElementById('progress');
+let ticking = false;
+
+function updateProgress() {
+  const scrolled = window.scrollY;
+  const total = document.documentElement.scrollHeight - window.innerHeight;
+  const ratio = total > 0 ? Math.min(scrolled / total, 1) : 0;
+  progressBar.style.transform = 'scaleX(' + ratio + ')';
+  ticking = false;
+}
+
+window.addEventListener('scroll', () => {
+  if (!ticking) {
+    window.requestAnimationFrame(updateProgress);
+    ticking = true;
+  }
+}, { passive: true });
+
+updateProgress(); // set the correct initial state on load
+
+
+/* ============================================================================
+   ============================================================================
+
+     HOW INTERSECTIONOBSERVER WORKS — in plain language
+
+   ----------------------------------------------------------------------------
+   THE OLD WAY (don't do this)
+   You'd listen to the scroll event and, on every single tick, ask each element
+   "where are you on the page right now?" via getBoundingClientRect(). Asking
+   that question forces the browser to stop and recalculate the layout of the
+   page. Do it for 30 elements, 100 times a second, and the page stutters.
+
+   THE IDEA
+   IntersectionObserver flips the relationship around. Instead of you constantly
+   asking, you hand the browser a list: "watch these elements for me, and tap me
+   on the shoulder when any of them enters or leaves the screen." The browser
+   already knows where everything is — it's the one doing the scrolling — so it
+   can answer for free, off the main thread. Your code runs only at the moments
+   that actually matter.
+
+   THE THREE PIECES
+
+   1. THE CALLBACK — the function you write.
+      The browser calls it with a list of `entries`, one per element whose
+      visibility just changed. The bit you almost always care about is
+      `entry.isIntersecting` (true = it's on screen) and `entry.target`
+      (the actual DOM element). In this file, the callback does one thing:
+      add a CSS class.
+
+   2. THE OPTIONS — when should "on screen" count?
+        • root       — what we're measuring against. null means the viewport.
+        • threshold  — how much of the element must be showing. 0 = a single
+                       pixel; 0.15 = 15%; 1 = every last pixel.
+        • rootMargin — an invisible frame you can grow or shrink around the
+                       viewport. '-12%' on the bottom pulls the trigger line UP,
+                       so elements must come further onto the screen before they
+                       count. Positive values do the opposite: they trigger
+                       early, which is how image lazy-loading preloads.
+
+   3. THE SUBSCRIPTION — observer.observe(element).
+      Nothing happens until you call this, once per element. Its opposite,
+      observer.unobserve(element), cancels the watch — which we use for the
+      text, because once a paragraph has faded in, its job is done forever.
+
+   ONE GOTCHA WORTH KNOWING
+   The observer fires once immediately after you call observe(), reporting the
+   element's current state. That's a feature: elements already on screen when
+   the page loads animate in right away, with no special-case code.
+
+   WHY THIS DESIGN IS NICE
+   JavaScript never touches a style property here. It adds a class name; CSS
+   owns every duration, distance and easing curve. That means you can retime the
+   entire site's choreography by editing the variables at the top of the
+   stylesheet, without reading a line of this script.
+
+   ============================================================================
+
+     CUSTOMISATION CHEAT SHEET
+
+   ----------------------------------------------------------------------------
+   ① TEXT FADES TOO SLOW / TOO FAST
+      → CSS :root → --reveal-dur (default 1.8s). Try 1.2s for brisker,
+        2.4s for more funereal.
+      → --reveal-lift (40px) controls how far it rises from.
+      → --reveal-stagger (.28s) controls the gap between consecutive lines.
+      → To change WHEN it triggers, edit `threshold` / `rootMargin` in the
+        textObserver options above.
+
+   ② FOG TOO THICK / TOO THIN
+      → CSS :root → --fog-opacity (0 turns fog off entirely).
+      → --fog-speed (70s) — HIGHER number = SLOWER, heavier air.
+      → To change fog on ONE section only, edit the inline style on
+        <section id="scene-6">: style="--fog-opacity: .8; --fog-speed: 55s;"
+        Custom properties inherit, so a value set on a section beats :root for
+        everything inside it. This is the pattern for tuning any single scene.
+
+   ③ RAIN / ASH SPEED AND DENSITY
+      → --rain-speed (.9s, LOWER = harder rain), --rain-opacity.
+      → --ash-speed (26s, LOWER = faster rise), --ash-opacity.
+      → For denser ash, shrink the background-size values in .ash-1/.ash-2
+        (e.g. 140px → 80px puts more specks in the same area).
+
+   ④ HOW DARK THE EDGES ARE
+      → --vig-start (38%) — LOWER = the darkness starts closer to the centre.
+      → --vig-power (.96) — the alpha of the outer edge; 1 = pure black.
+
+   ⑤ MOBILE TEXT SIZE
+      → --fs-story: clamp(1.15rem, 0.95rem + 0.85vw, 1.7rem)
+        The FIRST value is the phone floor. Raise 1.15rem to 1.25rem for larger
+        mobile text; raise the LAST value for bigger desktop text.
+      → --lh-story (1.95) is the line height. Also overridden in the
+        max-width:700px media query.
+      → --measure (34em) caps the line length on desktop.
+
+   ⑥ ADDING YOUR ARTWORK
+      In each section, find the .layer-bg div and:
+        1. Replace  --img: none  with  --img: url('images/01-forest.jpg')
+        2. Change   class="layer layer-bg"  to  class="layer layer-bg has-art"
+        3. Delete the <span class="art-note">…</span> line.
+      Put the files in an /images folder next to index.html. Use relative paths
+      (no leading slash) — GitHub Pages serves the site from a subfolder, and a
+      leading slash will break every image once deployed.
+      Aim for 1600–2000px wide JPEGs at ~70% quality; the filters destroy fine
+      detail anyway, so large files buy you nothing.
+
+   ⑦ THE BACKGROUND "BREATHING" ZOOM
+      → --breathe-dur (10s) and --breathe-scale (1.05).
+      → transform-origin is set inline per section (e.g. 50% 70%) so each image
+        drifts toward a different part of the frame. Vary it — identical drift
+        across eight sections is what makes a site feel templated.
+
+   ⑧ ADDING A NINTH SECTION
+      Copy any <section class="scene">…</section> block wholesale, change the
+      id, swap the .atmos-* class, and you're done. The observers query the DOM
+      on load, so any new .scene / .reveal is picked up automatically with no
+      JavaScript changes.
+
+   ----------------------------------------------------------------------------
+   DEPLOYING TO GITHUB PAGES
+     1. Create a repo, put this file at the root as index.html.
+     2. Settings → Pages → Source: "Deploy from a branch" → main → / (root).
+     3. Wait ~60 seconds, then open https://<username>.github.io/<repo>/
+     No build step, no dependencies. That's the advantage of one flat file.
+   ============================================================================ */
+</script>
+</body>
+</html>
